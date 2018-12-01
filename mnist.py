@@ -4,12 +4,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms, models
 import matplotlib.pyplot as plt
 import numpy as np
 
+from torchsummary import summary
+
 # Training hyperparameters
-epochs = 25
+epochs = 1
 batch_size = 64
 learning_rate = 0.01
 momentum = 0.5
@@ -119,26 +121,25 @@ class InceptionNet(nn.Module):
 class CNN(nn.Module):
     def __init__(self):
         super(CNN, self).__init__()
-        self.bm = nn.BatchNorm2d(1)
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=128,
+        self.batchnorm = nn.BatchNorm2d(1)
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32,
                                kernel_size=5, stride=1, padding=0)
 
         # create the second Convolution layer
-        self.conv2 = nn.Conv2d(in_channels=128, out_channels=800,
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64,
                                kernel_size=5, stride=1, padding=0)
 
-#        self.conv3 = nn.Conv2d(in_channels=512, out_channels=1024,
-#                                kernel_size=3, stride=1, padding=0)
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=128,
+                                kernel_size=3, stride=1, padding=0)
 
         self.mPool = nn.MaxPool2d(2)
+        self.nn_dropout = nn.Dropout2d(p=0.5)
 
-        self.fc1 = nn.Linear(in_features=80000, out_features=512)
-        self.fc1_dropout = nn.Dropout2d(p=0.45)
+        self.fc1 = nn.Linear(in_features=8192, out_features=512)
+        
         self.fc2 = nn.Linear(in_features=512, out_features=128)
         self.fc3 = nn.Linear(in_features=128
                              , out_features=10)
-        
-        self.batch_norm2 = nn.BatchNorm2d(128)
         nn.init.kaiming_normal_(self.conv1.weight)
         nn.init.kaiming_normal_(self.conv2.weight)
 #        nn.init.kaiming_normal_(self.conv3.weight)
@@ -148,26 +149,38 @@ class CNN(nn.Module):
 
     def forward(self, x):
         input_size = x.size(0)
-        x = self.bm(x)
+        
+        #Batch normalization
+        x = self.batchnorm(x)
+        
+        #First CNN
         x = self.conv1(x)
-
         x = F.relu(x)
         # print(x.shape)
-
+        
+        #Second CNN
         x = self.conv2(x)
         x = self.mPool(x)
         x = F.relu(x)
-
+        # print(x.size())
+        
+        #Third CNN
+        x = self.conv3(x)
+        x = F.relu(x)
+        x = self.nn_dropout(x) #drop 50 %
+        
+        #Getting ready for connecting to FC
         x = x.view(input_size, -1)
 
+        #First FC layer
         x = self.fc1(x)
         x = F.relu(x)
-        x = self.fc1_dropout(x)
         
+        #Second FC layer
         x = self.fc2(x)
         x = F.relu(x)
-        x = self.fc1_dropout(x)
-#        x = self.batch_norm2(x)
+        
+        #Third FC layer
         x = self.fc3(x)
         return F.log_softmax(x, dim=1)
 
@@ -180,6 +193,7 @@ def plot_data(data, label, text):
         plt.imshow(data[i][0], cmap='gray', interpolation='none')
         # print(label_dict[int("{}".format(label[i]))])
         plt.title(text + ": {}".format(label[i]))
+#        plt.title(label_dict[int("".format(label[i]))])
         plt.xticks([])
         plt.yticks([])
     plt.show()
@@ -215,7 +229,7 @@ def train(model, device, train_loader, optimizer, epoch, losses=[], counter=[], 
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
-        loss = F.cross_entropy(output, target)
+        loss = F.nll_loss(output, target)
         loss.backward()
         optimizer.step()
         if batch_idx % log_interval == 0:
@@ -237,7 +251,7 @@ def test(model, device, test_loader, losses=[], errors=[]):
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            test_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
+            test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
             pred = output.max(1, keepdim=True)[1]  # get the index of the max log-probability
             correct += pred.eq(target.view_as(pred)).sum().item()
 
@@ -287,6 +301,8 @@ def main():
     # model creation
     #model = FCN().to(device)
     model = CNN().to(device)
+    
+#    model.load_state_dict(torch.load('3c3f.pt'))
 #    model = InceptionNet().to(device)
 #    model = CNNModel().to(device)
     # optimizer creation
@@ -305,23 +321,24 @@ def main():
     # test of randomly initialized model
     test(model, device, test_loader, losses=test_losses)
 
-    # global training and testing loop
+#     global training and testing loop
     for epoch in range(1, epochs + 1):
         train(model, device, train_loader, optimizer, epoch, losses=train_losses, counter=train_counter, errors=train_errors)
         test(model, device, test_loader, losses=test_losses, errors=test_errors)
-
-    # plotting training history
+#
+#    # plotting training history
     plot_graph(train_counter, train_losses, test_counter, test_losses, ylabel='negative log likelihood loss')
     plot_graph(error_counter, train_errors, error_counter, test_errors, ylabel='error (%)')
-
-    # extract and plot random samples of data with predicted labels
+#
+#    # extract and plot random samples of data with predicted labels
     data, _, pred = predict_batch(model, device, test_loader)
     plot_data(data, pred, 'Predicted')
-    
-    #Save the model
-    torch.save(model.state_dict(), '2c3f.pt')
-    
+#    
+#    #Save the model
+    torch.save(model.state_dict(), '3c3f.pt')
+#    
     save_predictions(model, device, test_loader, "E:\\predictions.txt")
+    summary(model, (1,28,28))
 
 if __name__ == '__main__':
     main()
